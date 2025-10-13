@@ -1,0 +1,206 @@
+---
+title: "Assignment 3"
+author: "Kight Pruszynski"
+date: "2025-10-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(caret)
+library(ISLR)
+library(e1071)
+library(reshape)
+
+universal<-read.csv("UniversalBank.csv")
+```
+# Remove unneeded columns
+# (Could also do selected.var<-c(10,13,14)); from 'Data Mining...' p.195)
+```{r}
+universal<-universal[,c("Personal.Loan","CreditCard","Online")]
+
+# Column names
+
+colnames(universal)<-c("loan","cc","online")
+
+# Set seed
+
+set.seed(123)
+```
+# Partition data into train (60%) and validate (40%)
+```{r}
+index_train_loan<-createDataPartition(universal$loan, p=.6, list=FALSE)
+train<-universal[index_train_loan,]
+valid<-universal[-index_train_loan,]
+```
+#Factors with levels 0/1 (I needed considerable help with this)
+```{r}
+train[]<-lapply(train, function(x) factor(x, levels=c(0,1)))
+valid[]<-lapply(valid, function(x) factor(x, levels=c(0,1)))
+```
+#A.) Create pivot table conveying the counts for column Online and rows CC and Loan, using reshape (merge) and (cast) or R base (table).
+# I needed help naming the columns.
+```{r}
+train_melt<-melt(train, id=c("cc", "loan"), measure="online")
+pivot_table_online<-cast(train_melt, cc + loan ~ value, length) 
+
+names(pivot_table_online)[names(pivot_table_online) == "0"]<-"Online=0"
+names(pivot_table_online)[names(pivot_table_online) == "1"]<-"Online=1"
+pivot_table_online
+```
+# B.) The probability (P) a customer who has a credit card (B1) and banks online (B2) will accept the loan offer (A). 
+# Calculating the exact Bayes
+# P(loan=1 | cc=1, online=1) = (# of loan=1, cc=1, online=1) / (# of cc=1, online=1)
+```{r}
+num<-pivot_table_online[4,4]
+den<-pivot_table_online[3,4]+num
+prob<-num/den
+prob # 0.1071429
+```
+# C.) Create two pivot tables for train: (loan, online) and (loan, cc).
+```{r}
+table_loan_online<-table(train$loan,train$online)
+table_loan_online<-table(Loan=train$loan, Online=train$online)
+table_loan_online 
+
+table_loan_cc<-table(train$loan,train$cc)
+table_loan_cc<-table(Loan=train$loan, CC=train$cc)
+table_loan_cc
+```
+# D.) Compute the following quantities for P(A | B).
+# Assuming conditional independence in preparation for naive Bayes
+```{r}
+p_online_loan<-prop.table(table_loan_online, margin = 1)
+p_cc_loan<-prop.table(table_loan_cc, margin = 1)
+
+# D/i.) P(CC=1 | Loan=1)
+
+p_cc1_l1 <- p_cc_loan["1","1"]
+p_cc1_l1 #0.3273381
+
+# D/ii.) P(Online=1 | Loan=1)
+
+p_o1_l1 <- p_online_loan["1","1"]
+p_o1_l1 # 0.6438849
+
+# D/iii.) P(Loan=1) (Proportion accepting) (Prior)
+# I needed considerable help with this one.
+
+p_l1 <- sum(table_loan_online["1",]) / sum(table_loan_online)
+p_l1 # 0.09266667
+
+# D/iv.) P(CC=1 | Loan=0)
+
+p_cc1_l0 <- p_cc_loan["0","1"]
+p_cc1_l0 # 0.2909625
+
+# D/v.) P(Online=1 | Loan=0)
+
+p_o1_l0 <- p_online_loan["0","1"]
+p_o1_l0 # 0.5951506
+
+# D/vi.) P(Loan=0)  
+
+p_l0 <- sum(table_loan_online["0",]) / sum(table_loan_online)
+p_l0 # 0.9073333
+```
+# E.) Use the above quantities to calculate the naive Bayes probability
+# P(Loan=1 | CC=1, Online=1)
+```{r}
+num_nb <- p_cc1_l1 * p_o1_l1 * p_l1
+den_nb <- num_nb + (p_cc1_l0 * p_o1_l0 * p_l0)
+p_nb <- as.numeric(num_nb / den_nb)
+p_nb #0.1105637
+```
+# F.) Which is more accurate, the exact Bayes or naive Bayes?
+```{r}
+prob # exact Bayes = 10.71% from Part B
+p_nb # naive Bayes = 11.06% from Part E
+```
+# The exact Bayes (prob=10.71% in this case) is the more accurate calculation of observed performance.
+# Actual Bayes is impractical for prediction purpose when handling high-dimensional data.
+# Naive Bayes (p_nb=11.06% in this case) assumes conditional independence between predictors so isn't as accurate as actual Bayes
+# Naive Bayes is very often "accurate enough" and is also useful for ranking probabilities.
+
+# ---
+
+# G.) Run naive Bayes on the data. 
+# Examine the model output on training data and find the entry that corresponds with P(Loan = 1 | CC = 1, Online = 1)
+# Compare this to the number obtained in (E).
+```{r}
+train_nb <- naiveBayes(loan ~ cc + online, data = train)
+train_nb
+```
+#The entry that corresponds with P(Loan = 1 | CC = 1, Online = 1) is the posterior conditional probabilities:
+
+# A-priori probabilities:
+# Y
+# 0 / 0.90733333            
+# 1 / 0.09266667 
+# Gives P(Loan=1) = .0927
+
+# cc Y / (Loan=)0 /  (Loan=)1
+# 0 / 0.7090375 / 0.2909625
+# 1 / 0.6726619 / 0.3273381 
+# Gives P(CC=1 | Loan=1)=0.3273 and P(CC=1 | Loan=0)=0.2910
+
+# online Y / (Loan=)0 / (Loan=)1 
+# 0 / 0.4048494 / 0.5951506
+# 1 / 0.3561151 / 0.6438849 
+# Gives P(Online=1 | Loan=1)=0.6439 and P(Online=1 | Loan=0)=0.5952
+
+# The naive Bayes formula gives P(Loan=1 | CC=1, Online=1)=0.1106, which matches the prediction from the model.
+
+# P(Loan=1 | CC=1, Online=1) = P(CC=1 | Loan=1)P(Online=1 | (Loan=1)P(Loan=1)/Den
+# P(Loan=1)=0.0927, P(CC=1 | Loan=1)=0.3273, P(Online=1, Loan=1)=0.6439
+
+# P(Loan=1) = 0.0927
+# P(Loan=0) = 0.9073
+# P(CC=1 | Loan=1) = 0.3273
+# P(CC=1 | Loan=0) = 0.2910
+# P(Online=1 | Loan=1) = 0.6439
+# P(Online=1 | Loan=0) = 0.5952
+
+# These in naive Bayes:
+# P(Loan=1 | CC=1, Online=1) = 0.1106
+
+# The result of E: 0.1106
+
+#---
+
+# Verify 
+# (I received help for verify.)
+
+```{r}
+
+new_obs <- data.frame(cc=factor(1, levels=c(0,1)),
+                      online=factor(1, levels=c(0,1)))
+predict(train_nb, newdata=new_obs, type="raw")
+
+# 0.8894363 0.1105637
+
+```
+
